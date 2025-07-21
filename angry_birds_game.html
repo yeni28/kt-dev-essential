@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🐦 앵그리버드 게임 🐷</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Arial', sans-serif;
+            background: linear-gradient(135deg, #87CEEB 0%, #98FB98 100%);
+            overflow: hidden;
+            cursor: crosshair;
+        }
+
+        #gameCanvas {
+            border: 3px solid #8B4513;
+            border-radius: 10px;
+            box-shadow: 0 0 20px rgba(0,0,0,0.3);
+            background: linear-gradient(to bottom, #87CEEB 0%, #98FB98 70%, #228B22 100%);
+        }
+
+        .game-ui {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            font-size: 18px;
+            font-weight: bold;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.7);
+            z-index: 100;
+        }
+
+        .instructions {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            color: white;
+            font-size: 14px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.7);
+            text-align: right;
+            z-index: 100;
+        }
+
+        .center {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .restart-btn {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 10px 20px;
+            background: linear-gradient(45deg, #ff6b6b, #feca57);
+            border: none;
+            border-radius: 25px;
+            color: white;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+            transition: all 0.3s ease;
+            z-index: 100;
+        }
+
+        .restart-btn:hover {
+            transform: translateX(-50%) translateY(-3px);
+            box-shadow: 0 6px 20px rgba(0,0,0,0.4);
+        }
+    </style>
+</head>
+<body>
+    <div class="center">
+        <div class="game-ui">
+            <div>점수: <span id="score">0</span></div>
+            <div>새: <span id="birds">3</span></div>
+            <div>적: <span id="enemies">3</span></div>
+        </div>
+        
+        <div class="instructions">
+            🎯 마우스로 새를 끌어당겨 발사하세요!<br>
+            🐷 모든 돼지를 제거하세요!<br>
+            📦 나무 상자를 파괴할 수 있어요!
+        </div>
+
+        <canvas id="gameCanvas" width="1000" height="600"></canvas>
+        
+        <button class="restart-btn" onclick="restartGame()">🔄 새 게임</button>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // 게임 상태
+        let gameState = {
+            score: 0,
+            birdsLeft: 3,
+            enemiesLeft: 3,
+            currentBird: null,
+            isAiming: false,
+            gameWon: false,
+            gameOver: false
+        };
+
+        // 물리 설정
+        const physics = {
+            gravity: 0.3,
+            friction: 0.99,
+            bounce: 0.7
+        };
+
+        // 슬링샷 설정
+        const slingshot = {
+            x: 150,
+            y: 450,
+            maxPower: 15
+        };
+
+        // 게임 객체들
+        let birds = [];
+        let enemies = [];
+        let structures = [];
+        let particles = [];
+
+        // 새 클래스
+        class Bird {
+            constructor(x, y, type = 'red') {
+                this.x = x;
+                this.y = y;
+                this.vx = 0;
+                this.vy = 0;
+                this.radius = 15;
+                this.type = type;
+                this.launched = false;
+                this.trail = [];
+                this.color = this.getColor();
+            }
+
+            getColor() {
+                const colors = {
+                    red: '#FF4444',
+                    blue: '#4444FF',
+                    yellow: '#FFFF44'
+                };
+                return colors[this.type] || colors.red;
+            }
+
+            update() {
+                if (this.launched) {
+                    // 중력 적용
+                    this.vy += physics.gravity;
+                    
+                    // 위치 업데이트
+                    this.x += this.vx;
+                    this.y += this.vy;
+
+                    // 마찰 적용
+                    this.vx *= physics.friction;
+
+                    // 궤적 추가
+                    this.trail.push({x: this.x, y: this.y});
+                    if (this.trail.length > 10) {
+                        this.trail.shift();
+                    }
+
+                    // 바닥 충돌
+                    if (this.y + this.radius > canvas.height - 50) {
+                        this.y = canvas.height - 50 - this.radius;
+                        this.vy *= -physics.bounce;
+                        this.vx *= physics.friction;
+                    }
+
+                    // 경계 검사
+                    if (this.x < 0 || this.x > canvas.width || this.y > canvas.height) {
+                        this.remove();
+                    }
+                }
+            }
+
+            draw() {
+                // 궤적 그리기
+                if (this.trail.length > 1) {
+                    ctx.strokeStyle = this.color + '66';
+                    ctx.lineWidth = 3;
+                    ctx.beginPath();
+                    ctx.moveTo(this.trail[0].x, this.trail[0].y);
+                    for (let i = 1; i < this.trail.length; i++) {
+                        ctx.lineTo(this.trail[i].x, this.trail[i].y);
+                    }
+                    ctx.stroke();
+                }
+
+                // 새 그리기
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fill();
+
+                // 새 얼굴
+                ctx.fillStyle = 'white';
+                ctx.beginPath();
+                ctx.arc(this.x - 5, this.y - 3, 4, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(this.x + 5, this.y - 3, 4, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.fillStyle = 'black';
+                ctx.beginPath();
+                ctx.arc(this.x - 5, this.y - 3, 2, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(this.x + 5, this.y - 3, 2, 0, Math.PI * 2);
+                ctx.fill();
+
+                // 부리
+                ctx.fillStyle = 'orange';
+                ctx.beginPath();
+                ctx.moveTo(this.x, this.y + 2);
+                ctx.lineTo(this.x - 8, this.y + 5);
+                ctx.lineTo(this.x, this.y + 8);
+                ctx.fill();
+            }
+
+            launch(power, angle) {
+                this.vx = Math.cos(angle) * power;
+                this.vy = Math.sin(angle) * power;
+                this.launched = true;
+            }
+
+            remove() {
+                const index = birds.indexOf(this);
+                if (index > -1) {
+                    birds.splice(index, 1);
+                }
+            }
+        }
+
+        // 적 클래스 (돼지)
+        class Enemy {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.radius = 20;
+                this.health = 1;
+                this.vx = 0;
+                this.vy = 0;
+            }
+
+            update() {
+                this.vy += physics.gravity;
+                this.x += this.vx;
+                this.y += this.vy;
+
+                // 바닥 충돌
+                if (this.y + this.radius > canvas.height - 50) {
+                    this.y = canvas.height - 50 - this.radius;
+                    this.vy *= -physics.bounce;
+                    this.vx *= physics.friction;
+                }
+            }
+
+            draw() {
+                // 돼지 몸
+                ctx.fillStyle = '#90EE90';
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fill();
+
+                // 돼지 얼굴
+                ctx.fillStyle = 'white';
+                ctx.beginPath();
+                ctx.arc(this.x - 6, this.y - 5, 3, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(this.x + 6, this.y - 5, 3, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.fillStyle = 'black';
+                ctx.beginPath();
+                ctx.arc(this.x - 6, this.y - 5, 1.5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(this.x + 6, this.y - 5, 1.5, 0, Math.PI * 2);
+                ctx.fill();
+
+                // 코
+                ctx.fillStyle = 'pink';
+                ctx.beginPath();
+                ctx.ellipse(this.x, this.y + 2, 4, 3, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.fillStyle = 'black';
+                ctx.beginPath();
+                ctx.arc(this.x - 1, this.y + 2, 1, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(this.x + 1, this.y + 2, 1, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            takeDamage() {
+                this.health--;
+                if (this.health <= 0) {
+                    this.destroy();
+                }
+            }
+
+            destroy() {
+                // 파괴 파티클 생성
+                for (let i = 0; i < 15; i++) {
+                    particles.push(new Particle(this.x, this.y, '#90EE90'));
+                }
+                
+                const index = enemies.indexOf(this);
+                if (index > -1) {
+                    enemies.splice(index, 1);
+                    gameState.score += 100;
+                    gameState.enemiesLeft--;
+                    updateUI();
+                }
+            }
+        }
+
+        // 구조물 클래스
+        class Structure {
+            constructor(x, y, width, height, type = 'wood') {
+                this.x = x;
+                this.y = y;
+                this.width = width;
+                this.height = height;
+                this.type = type;
+                this.health = type === 'wood' ? 1 : 2;
+                this.vx = 0;
+                this.vy = 0;
+                this.color = type === 'wood' ? '#8B4513' : '#808080';
+            }
+
+            update() {
+                this.vy += physics.gravity;
+                this.x += this.vx;
+                this.y += this.vy;
+
+                // 바닥 충돌
+                if (this.y + this.height > canvas.height - 50) {
+                    this.y = canvas.height - 50 - this.height;
+                    this.vy *= -physics.bounce;
+                    this.vx *= physics.friction;
+                }
+            }
+
+            draw() {
+                ctx.fillStyle = this.color;
+                ctx.fillRect(this.x, this.y, this.width, this.height);
+                
+                // 테두리
+                ctx.strokeStyle = 'black';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(this.x, this.y, this.width, this.height);
+
+                // 나무 무늬
+                if (this.type === 'wood') {
+                    ctx.strokeStyle = '#654321';
+                    ctx.lineWidth = 1;
+                    for (let i = 0; i < this.height; i += 10) {
+                        ctx.beginPath();
+                        ctx.moveTo(this.x, this.y + i);
+                        ctx.lineTo(this.x + this.width, this.y + i);
+                        ctx.stroke();
+                    }
+                }
+            }
+
+            takeDamage() {
+                this.health--;
+                if (this.health <= 0) {
+                    this.destroy();
+                }
+            }
+
+            destroy() {
+                // 파괴 파티클 생성
+                for (let i = 0; i < 10; i++) {
+                    particles.push(new Particle(
+                        this.x + this.width/2, 
+                        this.y + this.height/2, 
+                        this.color
+                    ));
+                }
+                
+                const index = structures.indexOf(this);
+                if (index > -1) {
+                    structures.splice(index, 1);
+                    gameState.score += 50;
+                    updateUI();
+                }
+            }
+        }
+
+        // 파티클 클래스
+        class Particle {
+            constructor(x, y, color) {
+                this.x = x;
+                this.y = y;
+                this.vx = (Math.random() - 0.5) * 10;
+                this.vy = (Math.random() - 0.5) * 10 - 5;
+                this.color = color;
+                this.life = 60;
+                this.maxLife = 60;
+                this.size = Math.random() * 5 + 2;
+            }
+
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+                this.vy += 0.2;
+                this.life--;
+                this.vx *= 0.98;
+            }
+
+            draw() {
+                const alpha = this.life / this.maxLife;
+                ctx.globalAlpha = alpha;
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.globalAlpha = 1;
+            }
+
+            isDead() {
+                return this.life <= 0;
+            }
+        }
+
+        // 충돌 감지
+        function checkCollisions() {
+            birds.forEach(bird => {
+                if (!bird.launched) return;
+
+                // 적과 충돌
+                enemies.forEach(enemy => {
+                    const dist = Math.sqrt(
+                        Math.pow(bird.x - enemy.x, 2) + 
+                        Math.pow(bird.y - enemy.y, 2)
+                    );
+                    if (dist < bird.radius + enemy.radius) {
+                        enemy.takeDamage();
+                        enemy.vx = bird.vx * 0.3;
+                        enemy.vy = bird.vy * 0.3;
+                        bird.remove();
+                    }
+                });
+
+                // 구조물과 충돌
+                structures.forEach(structure => {
+                    if (bird.x + bird.radius > structure.x && 
+                        bird.x - bird.radius < structure.x + structure.width &&
+                        bird.y + bird.radius > structure.y && 
+                        bird.y - bird.radius < structure.y + structure.height) {
+                        
+                        structure.takeDamage();
+                        structure.vx = bird.vx * 0.2;
+                        structure.vy = bird.vy * 0.2;
+                        bird.vx *= -0.5;
+                        bird.vy *= -0.5;
+                    }
+                });
+            });
+
+            // 구조물과 적 충돌
+            structures.forEach(structure => {
+                enemies.forEach(enemy => {
+                    if (enemy.x + enemy.radius > structure.x && 
+                        enemy.x - enemy.radius < structure.x + structure.width &&
+                        enemy.y + enemy.radius > structure.y && 
+                        enemy.y - enemy.radius < structure.y + structure.height) {
+                        
+                        // 간단한 충돌 반응
+                        if (Math.abs(enemy.vx) > 2 || Math.abs(enemy.vy) > 2) {
+                            structure.takeDamage();
+                        }
+                    }
+                });
+            });
+        }
+
+        // 슬링샷 그리기
+        function drawSlingshot() {
+            ctx.strokeStyle = '#8B4513';
+            ctx.lineWidth = 8;
+            
+            // 슬링샷 기둥들
+            ctx.beginPath();
+            ctx.moveTo(slingshot.x - 20, slingshot.y);
+            ctx.lineTo(slingshot.x - 20, slingshot.y - 80);
+            ctx.stroke();
+            
+            ctx.beginPath();
+            ctx.moveTo(slingshot.x + 20, slingshot.y);
+            ctx.lineTo(slingshot.x + 20, slingshot.y - 80);
+            ctx.stroke();
+
+            // 고무줄
+            if (gameState.currentBird && gameState.isAiming) {
+                ctx.strokeStyle = '#8B4513';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.moveTo(slingshot.x - 20, slingshot.y - 80);
+                ctx.lineTo(gameState.currentBird.x, gameState.currentBird.y);
+                ctx.lineTo(slingshot.x + 20, slingshot.y - 80);
+                ctx.stroke();
+            }
+        }
+
+        // 게임 초기화
+        function initGame() {
+            birds = [];
+            enemies = [];
+            structures = [];
+            particles = [];
+            
+            gameState = {
+                score: 0,
+                birdsLeft: 3,
+                enemiesLeft: 3,
+                currentBird: null,
+                isAiming: false,
+                gameWon: false,
+                gameOver: false
+            };
+
+            // 적 생성
+            enemies.push(new Enemy(700, 400));
+            enemies.push(new Enemy(800, 350));
+            enemies.push(new Enemy(750, 300));
+
+            // 구조물 생성
+            structures.push(new Structure(680, 420, 15, 80, 'wood'));
+            structures.push(new Structure(720, 420, 15, 80, 'wood'));
+            structures.push(new Structure(680, 340, 55, 15, 'wood'));
+            
+            structures.push(new Structure(780, 370, 15, 80, 'wood'));
+            structures.push(new Structure(820, 370, 15, 80, 'wood'));
+            structures.push(new Structure(780, 290, 55, 15, 'wood'));
+
+            structures.push(new Structure(730, 285, 15, 80, 'wood'));
+            structures.push(new Structure(770, 285, 15, 80, 'wood'));
+            structures.push(new Structure(730, 205, 55, 15, 'wood'));
+
+            // 첫 번째 새 생성
+            createNewBird();
+            updateUI();
+        }
+
+        // 새 새 생성
+        function createNewBird() {
+            if (gameState.birdsLeft > 0) {
+                const birdTypes = ['red', 'blue', 'yellow'];
+                const type = birdTypes[Math.floor(Math.random() * birdTypes.length)];
+                gameState.currentBird = new Bird(slingshot.x, slingshot.y - 20, type);
+                birds.push(gameState.currentBird);
+            }
+        }
+
+        // UI 업데이트
+        function updateUI() {
+            document.getElementById('score').textContent = gameState.score;
+            document.getElementById('birds').textContent = gameState.birdsLeft;
+            document.getElementById('enemies').textContent = gameState.enemiesLeft;
+        }
+
+        // 마우스 이벤트
+        let mouseX = 0, mouseY = 0;
+        let mouseDown = false;
+
+        canvas.addEventListener('mousedown', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            mouseX = e.clientX - rect.left;
+            mouseY = e.clientY - rect.top;
+            
+            if (gameState.currentBird && !gameState.currentBird.launched) {
+                const dist = Math.sqrt(
+                    Math.pow(mouseX - gameState.currentBird.x, 2) + 
+                    Math.pow(mouseY - gameState.currentBird.y, 2)
+                );
+                if (dist < 30) {
+                    gameState.isAiming = true;
+                    mouseDown = true;
+                }
+            }
+        });
+
+        canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            mouseX = e.clientX - rect.left;
+            mouseY = e.clientY - rect.top;
+            
+            if (gameState.isAiming && gameState.currentBird) {
+                const dx = slingshot.x - mouseX;
+                const dy = slingshot.y - 20 - mouseY;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                
+                if (distance > 100) {
+                    const angle = Math.atan2(dy, dx);
+                    gameState.currentBird.x = slingshot.x - Math.cos(angle) * 100;
+                    gameState.currentBird.y = slingshot.y - 20 - Math.sin(angle) * 100;
+                } else {
+                    gameState.currentBird.x = mouseX;
+                    gameState.currentBird.y = mouseY;
+                }
+            }
+        });
+
+        canvas.addEventListener('mouseup', () => {
+            if (gameState.isAiming && gameState.currentBird) {
+                const dx = slingshot.x - gameState.currentBird.x;
+                const dy = slingshot.y - 20 - gameState.currentBird.y;
+                const power = Math.min(Math.sqrt(dx * dx + dy * dy) / 10, slingshot.maxPower);
+                const angle = Math.atan2(dy, dx);
+                
+                gameState.currentBird.launch(power, angle);
+                gameState.birdsLeft--;
+                gameState.isAiming = false;
+                gameState.currentBird = null;
+                
+                setTimeout(() => {
+                    if (gameState.birdsLeft > 0 && !gameState.gameWon) {
+                        createNewBird();
+                    }
+                }, 2000);
+                
+                updateUI();
+            }
+            mouseDown = false;
+        });
+
+        // 게임 루프
+        function gameLoop() {
+            // 화면 지우기
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // 배경 그라데이션 다시 그리기
+            const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+            gradient.addColorStop(0, '#87CEEB');
+            gradient.addColorStop(0.7, '#98FB98');
+            gradient.addColorStop(1, '#228B22');
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // 땅 그리기
+            ctx.fillStyle = '#8B4513';
+            ctx.fillRect(0, canvas.height - 50, canvas.width, 50);
+
+            // 슬링샷 그리기
+            drawSlingshot();
+
+            // 게임 객체 업데이트 및 그리기
+            birds.forEach(bird => {
+                bird.update();
+                bird.draw();
+            });
+
+            enemies.forEach(enemy => {
+                enemy.update();
+                enemy.draw();
+            });
+
+            structures.forEach(structure => {
+                structure.update();
+                structure.draw();
+            });
+
+            // 파티클 업데이트 및 그리기
+            particles = particles.filter(particle => {
+                particle.update();
+                particle.draw();
+                return !particle.isDead();
+            });
+
+            // 충돌 검사
+            checkCollisions();
+
+            // 게임 종료 조건 확인
+            if (enemies.length === 0 && !gameState.gameWon) {
+                gameState.gameWon = true;
+                setTimeout(() => {
+                    alert('🎉 축하합니다! 모든 돼지를 제거했습니다!');
+                }, 500);
+            } else if (gameState.birdsLeft === 0 && birds.length === 0 && !gameState.gameWon) {
+                gameState.gameOver = true;
+                setTimeout(() => {
+                    alert('😢 게임 오버! 다시 시도해보세요!');
+                }, 500);
+            }
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        // 게임 재시작
+        function restartGame() {
+            initGame();
+        }
+
+        // 게임 시작
+        initGame();
+        gameLoop();
+    </script>
+</body>
+</html> 
